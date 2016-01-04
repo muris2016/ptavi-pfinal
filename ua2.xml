@@ -1,0 +1,8 @@
+<config>
+  <accout username="javier@erazo.com" passwd="password"/>
+  <uaserver ip="127.0.0.1" puerto="5070"/>
+  <rtpaudio puerto= "23032"/>
+  <regproxy ip="127.0.0.1" puerto="5080"/>
+  <log path="log_ua2.txt"/>
+  <audio path="cancion.mp3"/>
+</config>
