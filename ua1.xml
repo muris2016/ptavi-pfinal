@@ -1,0 +1,8 @@
+<config>
+  <accout username="ronny@soria.com" passwd="contraseña"/>
+  <uaserver ip="127.0.0.1" puerto="5060"/>
+  <rtpaudio puerto= "12021"/>
+  <regproxy ip="127.0.0.1" puerto="5080"/>
+  <log path="log_ua1.txt"/>
+  <audio path="cancion.mp3"/>
+</config>
