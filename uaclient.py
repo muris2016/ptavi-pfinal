@@ -65,9 +65,11 @@ def connect_to_proxy(msg, my_socket, conf_ua_dict):
     write_log(log_path, 'Sent to', ip_server, port, msg)
 
 def register(my_socket, conf_ua_dict, expires):
+    write_log(log_path, 'Starting...')
     expires = int(expires)
     username = conf_ua_dict['account']['username']
-    msg = 'REGISTER sip:%s SIP/2.0\r\nExpires: %s\r\n\r\n' % (username, expires)
+    port_uas = int(conf_ua_dict['uaserver']['puerto'])
+    msg = 'REGISTER sip:%s:%s SIP/2.0\r\nExpires: %s\r\n\r\n' % (username, port_uas, expires)
     print(msg)
     connect_to_proxy(msg, my_socket, conf_ua_dict)
 
@@ -77,7 +79,7 @@ def register(my_socket, conf_ua_dict, expires):
         nonce = data.split()[-1].split('=')[-1]
         passwd = conf_ua_dict['account']['passwd']
         response = get_hash(nonce, passwd)
-        msg = 'REGISTER sip:%s SIP/2.0\r\nExpires: %s\r\n' % (username, expires)
+        msg = 'REGISTER sip:%s:%s SIP/2.0\r\nExpires: %s\r\n' % (username, port_uas, expires)
         msg += 'Authorization: response=%s\r\n\r\n' % (response)
         print(msg)
         connect_to_proxy(msg, my_socket, conf_ua_dict)
@@ -93,6 +95,10 @@ def invite(my_socket, conf_ua_dict, login):
     msg += 'm=audio %s RTP\r\n\r\n' % (rtpaudio_port)
     connect_to_proxy(msg, my_socket, conf_ua_dict)
 
+    data = my_socket.recv(1024).decode('utf-8')
+    print(data)
+    msg = 'ACK sip:%s SIP/2.0\r\n\r\n' % (login)
+    connect_to_proxy(msg, my_socket, conf_ua_dict)
 def bye():
     print('bye')
 
@@ -103,9 +109,9 @@ if __name__ == "__main__":
     log_path = conf_ua_dict['log']['path']
 
 
-    write_log(log_path, 'Starting...')
     # try:
     my_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     methods[method](my_socket, conf_ua_dict, option)
     # except:
     #     sys.exit("Usage: python uaclient.py config method option")
+    my_socket.close()
