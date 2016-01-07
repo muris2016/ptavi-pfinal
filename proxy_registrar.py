@@ -12,10 +12,9 @@ from xml.sax.handler import ContentHandler
 from uaclient import ConfigUAHandler
 from uaclient import get_tags
 from uaclient import get_hash
-from uaclient import get_hash
-
 
 DATE_F = '%Y-%m-%d %H:%M:%S +0100'
+
 
 class ConfigPRHandler(ConfigUAHandler):
     def __init__(self):
@@ -29,6 +28,7 @@ class ConfigPRHandler(ConfigUAHandler):
 conf_ua_dict = get_tags('pr.xml', ConfigPRHandler)
 passwdpath = conf_ua_dict['database']['passwdpath']
 database_path = conf_ua_dict['database']['path']
+
 
 def file2dict(filename):
     with open(filename, 'r') as outfile:
@@ -47,6 +47,7 @@ def clean_clients(users_dict):
     for client in clean_list:
         del users_dict[client]
 
+
 def sent_to_uaserver(line, my_socket):
     login = line.split()[1].split(':')[1]
     users_dict = file2dict(database_path)
@@ -57,6 +58,7 @@ def sent_to_uaserver(line, my_socket):
     my_socket.connect((ip_to_send, port_to_send))
     my_socket.send(bytes(line, 'utf-8'))
 
+
 class SIPPRHandler(socketserver.DatagramRequestHandler):
 
     users_dict = {}
@@ -64,7 +66,7 @@ class SIPPRHandler(socketserver.DatagramRequestHandler):
     def handle(self):
         self.users_dict = file2dict(database_path)
         clean_clients(self.users_dict)
-        self.methods = {"REGISTER": self.register, "INVITE": self.invite, "ACK": self.ack}
+        self.methods = {"REGISTER": self.register, "INVITE": self.invite, "ACK": self.ack, "BYE": self.bye}
         ip = self.client_address[0]
         port = self.client_address[1]
         # print (ip, port, "wrote:")
@@ -128,6 +130,15 @@ class SIPPRHandler(socketserver.DatagramRequestHandler):
         sent_to_uaserver(line, my_socket)
         my_socket.close()
 
+    def bye(self, line, ip):
+        print("recibooo ACK")
+        print(line)
+        my_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sent_to_uaserver(line, my_socket)
+
+        data = my_socket.recv(1024).decode('utf-8')
+        self.wfile.write(bytes(data, 'utf-8'))
+        my_socket.close()
 
 if __name__ == "__main__":
     port = int(conf_ua_dict['server']['puerto'])
