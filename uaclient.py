@@ -18,21 +18,22 @@ class ConfigUAHandler(ContentHandler):
                        'regproxy': {'ip': '', 'puerto': ''},
                        'log': {'path': ''}, 'audio': {'path': ''}}
 
-        self.conf_ua_dict = {}
+        self.config_dict = {}
 
     def startElement(self, name, attrs):
         if name in self.labels:
             my_dict = {key: attrs.get(key, '') for key in self.labels[name]}
-            self.conf_ua_dict[name] = my_dict
+            self.config_dict[name] = my_dict
 
 
-def write_log(log_path, event, ip='', port='', msg=''):
+def write_log(config_dict, event, ip='', port='', msg=''):
+    log_path = config_dict['log']['path']
     msg = ' '.join(msg.split())
     with open(log_path, 'a') as outfile:
         hour = str(time.strftime('%Y%m%d%H%M%S', time.gmtime()))
-        if ip != '':
-            outfile.write('%s %s %s:%s: %s\n' % (hour, event, ip, str(port), msg))
-        else:
+        if ip != '' and msg != '':
+            outfile.write('%s %s %s:%s: %s\n' % (hour, event, ip, port, msg))
+        elif ip == '':
             outfile.write('%s %s\n' % (hour, event))
 
 
@@ -41,12 +42,12 @@ def get_tags(config, Handler):
     cHandler = Handler()
     parser.setContentHandler(cHandler)
     parser.parse(open(config))
-    return cHandler.conf_ua_dict
+    return cHandler.config_dict
 
 
 def take_args():
     if len(sys.argv) != 4:
-        sys.exit("Usage: python uaclient.py config method option")
+        sys.exit('Usage: python uaclient.py config method option')
     else:
         return sys.argv[1], sys.argv[2], sys.argv[3]
 
@@ -58,77 +59,73 @@ def get_hash(nonce, passwd):
     return m.hexdigest()
 
 
-def connect_to_proxy(msg, my_socket, conf_ua_dict):
-    ip_server = conf_ua_dict['regproxy']['ip']
-    port = int(conf_ua_dict['regproxy']['puerto'])
+def connect_to_proxy(msg, my_socket, config_dict):
+    ip_server = config_dict['regproxy']['ip']
+    port = int(config_dict['regproxy']['puerto'])
+
     my_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     my_socket.connect((ip_server, port))
     my_socket.send(bytes(msg, 'utf-8'))
 
-    log_path = conf_ua_dict['log']['path']
-    write_log(log_path, 'Sent to', ip_server, port, msg)
-
-
-def register(my_socket, conf_ua_dict, expires):
-    write_log(log_path, 'Starting...')
-    expires = int(expires)
-    username = conf_ua_dict['account']['username']
-    port_uas = int(conf_ua_dict['uaserver']['puerto'])
-    msg = 'REGISTER sip:%s:%s SIP/2.0\r\nExpires: %s\r\n\r\n' % (username, port_uas, expires)
-    print(msg)
-    connect_to_proxy(msg, my_socket, conf_ua_dict)
-
+    write_log(config_dict, 'Sent to', ip_server, port, msg)
     data = my_socket.recv(1024).decode('utf-8')
-    print(data)
+    write_log(config_dict, 'Received from', ip_server, port, data)
+    return data
+
+
+def register(my_socket, config_dict, expires):
+    write_log(config_dict, 'Starting...')
+    expires = int(expires)
+    username = config_dict['account']['username']
+    port_uas = int(config_dict['uaserver']['puerto'])
+    msg = 'REGISTER sip:%s:%s SIP/2.0\r\n' % (username, port_uas)
+    msg += 'Expires: %s\r\n' % (expires)
+    data = connect_to_proxy(msg, my_socket, config_dict)
+
     if 'Unauthorized' in data.split():
         nonce = data.split()[-1].split('=')[-1]
-        passwd = conf_ua_dict['account']['passwd']
+        passwd = config_dict['account']['passwd']
         response = get_hash(nonce, passwd)
-        msg = 'REGISTER sip:%s:%s SIP/2.0\r\nExpires: %s\r\n' % (username, port_uas, expires)
+        msg = 'REGISTER sip:%s:%s SIP/2.0\r\n' % (username, port_uas)
+        msg += 'Expires: %s\r\n' % (expires)
         msg += 'Authorization: response=%s\r\n\r\n' % (response)
-        print(msg)
-        connect_to_proxy(msg, my_socket, conf_ua_dict)
-        data = my_socket.recv(1024).decode('utf-8')
-        print(data)
+        data = connect_to_proxy(msg, my_socket, config_dict)
 
 
-def invite(my_socket, conf_ua_dict, login):
-    username = conf_ua_dict['account']['username']
-    rtpaudio_port = conf_ua_dict['rtpaudio']['puerto']
+def invite(my_socket, config_dict, login):
+    username = config_dict['account']['username']
+    rtpaudio_port = config_dict['rtpaudio']['puerto']
     msg = 'INVITE sip:%s SIP/2.0\r\n' % (login)
     msg += 'Content-Type: application/sdp\r\n\r\n'
     msg += 'v=0\r\no=%s 127.0.0.1\r\ns=mp3p2p\r\nt=0\r\n' % (username)
     msg += 'm=audio %s RTP\r\n\r\n' % (rtpaudio_port)
-    connect_to_proxy(msg, my_socket, conf_ua_dict)
+    data = connect_to_proxy(msg, my_socket, config_dict)
 
-    data = my_socket.recv(1024).decode('utf-8')
-    print(data)
     if '100 Trying' in data and '180 Ring' and data and '200 OK' in data:
         msg = 'ACK sip:%s SIP/2.0\r\n\r\n' % (login)
-        connect_to_proxy(msg, my_socket, conf_ua_dict)
+        connect_to_proxy(msg, my_socket, config_dict)
 
         rtp_port = data.split('m=')[1].split()[1]
-        audio_file = conf_ua_dict['audio']['path']
+        audio_file = config_dict['audio']['path']
         for_run = './mp32rtp -i 127.0.0.1 -p %s < %s' % (rtp_port, audio_file)
         os.system(for_run)
 
 
-def bye(my_socket, conf_ua_dict, login):
+def bye(my_socket, config_dict, login):
     msg = 'BYE sip:%s SIP/2.0\r\n\r\n' % (login)
-    connect_to_proxy(msg, my_socket, conf_ua_dict)
-    data = my_socket.recv(1024).decode('utf-8')
+    data = connect_to_proxy(msg, my_socket, config_dict)
     if '200 OK' in data:
-        write_log(log_path, 'Finishing...')
+        write_log(config_dict, 'Finishing...\n\r')
 
-if __name__ == "__main__":
-    methods = {"REGISTER": register, "INVITE": invite, "BYE": bye}
+if __name__ == '__main__':
+    methods = {'REGISTER': register, 'INVITE': invite, 'BYE': bye}
     config, method, option = take_args()
-    conf_ua_dict = get_tags(config, ConfigUAHandler)
-    log_path = conf_ua_dict['log']['path']
+    config_dict = get_tags(config, ConfigUAHandler)
+    log_path = config_dict['log']['path']
 
     # try:
     my_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    methods[method](my_socket, conf_ua_dict, option)
+    methods[method](my_socket, config_dict, option)
     # except:
-    #     sys.exit("Usage: python uaclient.py config method option")
+    #     sys.exit('Usage: python uaclient.py config method option')
     my_socket.close()
