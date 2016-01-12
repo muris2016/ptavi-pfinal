@@ -1,48 +1,21 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-
 import sys
 import os
 import socket
 import hashlib
+
+
+import random
+
+import threading
 from xml.sax import make_parser
 from xml.sax.handler import ContentHandler
-import time
-
-
-class ConfigUAHandler(ContentHandler):
-    def __init__(self):
-        self.labels = {'account': {'username': '', 'passwd': ''},
-                       'uaserver': {'ip': '', 'puerto': ''},
-                       'rtpaudio':  {'puerto': ''},
-                       'regproxy': {'ip': '', 'puerto': ''},
-                       'log': {'path': ''}, 'audio': {'path': ''}}
-
-        self.config_dict = {}
-
-    def startElement(self, name, attrs):
-        if name in self.labels:
-            my_dict = {key: attrs.get(key, '') for key in self.labels[name]}
-            self.config_dict[name] = my_dict
-
-
-def write_log(config_dict, event, ip='', port='', msg=''):
-    log_path = config_dict['log']['path']
-    msg = ' '.join(msg.split())
-    with open(log_path, 'a') as outfile:
-        hour = str(time.strftime('%Y%m%d%H%M%S', time.gmtime()))
-        if ip != '' and msg != '':
-            outfile.write('%s %s %s:%s: %s\n' % (hour, event, ip, port, msg))
-        elif ip == '':
-            outfile.write('%s %s\n' % (hour, event))
-
-
-def get_tags(config, Handler):
-    parser = make_parser()
-    cHandler = Handler()
-    parser.setContentHandler(cHandler)
-    parser.parse(open(config))
-    return cHandler.config_dict
+from uaserver import ConfigHandler
+from uaserver import get_tags
+from uaserver import write_log
+# from uaserver import run_cvlc
+# from uaserver import send_rtp
 
 
 def take_args():
@@ -59,7 +32,19 @@ def get_hash(nonce, passwd):
     return m.hexdigest()
 
 
-def connect_to_proxy(msg, my_socket, config_dict):
+def run_cvlc(rtpaudio_port):
+    for_run = 'cvlc rtp://@127.0.0.1:%s 2> /dev/null &' % (rtpaudio_port)
+    print('voy a recibir auido')
+    os.system(for_run)
+
+
+def send_rtp(rtp_port, audio_file):
+    for_run = './mp32rtp -i 127.0.0.1 -p %s < %s' % (rtp_port, audio_file)
+    print('voy a enviar auido')
+    os.system(for_run)
+    print('Ya he terminado de enviar')
+
+def connect_to_proxy(msg, my_socket, config_dict, ack=False):
     ip_server = config_dict['regproxy']['ip']
     port = int(config_dict['regproxy']['puerto'])
 
@@ -68,9 +53,10 @@ def connect_to_proxy(msg, my_socket, config_dict):
     my_socket.send(bytes(msg, 'utf-8'))
 
     write_log(config_dict, 'Sent to', ip_server, port, msg)
-    data = my_socket.recv(1024).decode('utf-8')
-    write_log(config_dict, 'Received from', ip_server, port, data)
-    return data
+    if not ack:
+        data = my_socket.recv(1024).decode('utf-8')
+        write_log(config_dict, 'Received from', ip_server, port, data)
+        return data
 
 
 def register(my_socket, config_dict, expires):
@@ -79,16 +65,16 @@ def register(my_socket, config_dict, expires):
     username = config_dict['account']['username']
     port_uas = int(config_dict['uaserver']['puerto'])
     msg = 'REGISTER sip:%s:%s SIP/2.0\r\n' % (username, port_uas)
-    msg += 'Expires: %s\r\n' % (expires)
+    msg += 'Expires: %s\r\n\r\n' % (expires)
     data = connect_to_proxy(msg, my_socket, config_dict)
 
     if 'Unauthorized' in data.split():
-        nonce = data.split()[-1].split('=')[-1]
+        nonce = data.split()[-1].split('=')[-1].strip('"')
         passwd = config_dict['account']['passwd']
         response = get_hash(nonce, passwd)
         msg = 'REGISTER sip:%s:%s SIP/2.0\r\n' % (username, port_uas)
         msg += 'Expires: %s\r\n' % (expires)
-        msg += 'Authorization: response=%s\r\n\r\n' % (response)
+        msg += 'Authorization: Digest response="%s"\r\n\r\n' % (response)
         data = connect_to_proxy(msg, my_socket, config_dict)
 
 
@@ -103,29 +89,39 @@ def invite(my_socket, config_dict, login):
 
     if '100 Trying' in data and '180 Ring' and data and '200 OK' in data:
         msg = 'ACK sip:%s SIP/2.0\r\n\r\n' % (login)
-        connect_to_proxy(msg, my_socket, config_dict)
+        connect_to_proxy(msg, my_socket, config_dict, ack=True)
 
+        rtpaudio_port = config_dict['rtpaudio']['puerto']
         rtp_port = data.split('m=')[1].split()[1]
         audio_file = config_dict['audio']['path']
-        for_run = './mp32rtp -i 127.0.0.1 -p %s < %s' % (rtp_port, audio_file)
-        os.system(for_run)
 
-
+        t1 = threading.Thread(target=run_cvlc, args=(rtpaudio_port,))
+        t2 = threading.Thread(target=send_rtp, args=(rtp_port, audio_file,))
+        t1.start()
+        t2.start()
+    else:
+        print(data)
 def bye(my_socket, config_dict, login):
     msg = 'BYE sip:%s SIP/2.0\r\n\r\n' % (login)
     data = connect_to_proxy(msg, my_socket, config_dict)
     if '200 OK' in data:
         write_log(config_dict, 'Finishing...\n\r')
+    else:
+        print(data)
 
 if __name__ == '__main__':
     methods = {'REGISTER': register, 'INVITE': invite, 'BYE': bye}
     config, method, option = take_args()
-    config_dict = get_tags(config, ConfigUAHandler)
-    log_path = config_dict['log']['path']
+    config_dict = get_tags(config, ConfigHandler)
 
-    # try:
-    my_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    methods[method](my_socket, config_dict, option)
-    # except:
-    #     sys.exit('Usage: python uaclient.py config method option')
+    try:
+        my_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        methods[method](my_socket, config_dict, option)
+
+    except ConnectionRefusedError:
+        ip_server = config_dict['regproxy']['ip']
+        port = config_dict['regproxy']['puerto']
+        error = 'Error: No server listening at %s port %s' % (ip_server, port)
+        write_log(config_dict, error)
+
     my_socket.close()
