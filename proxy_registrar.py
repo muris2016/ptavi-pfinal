@@ -1,6 +1,5 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-
 import sys
 import socketserver
 import socket
@@ -10,23 +9,36 @@ import hashlib
 import time
 from xml.sax import make_parser
 from xml.sax.handler import ContentHandler
+from uaserver import write_log
 import uaclient
 import uaserver
-from uaserver import write_log
-
 
 class BadRequest(Exception):
     error = "SIP/2.0 400 Bad Request\r\n\r\n"
 
+
 class UserNotFound(Exception):
     error = "SIP/2.0 404 User Not Found\r\n\r\n"
+
 
 class MethodNotAllowed(Exception):
     error = "SIP/2.0 405 Method Not Allowed\r\n\r\n"
 
+
 class AddressIncomplete(Exception):
     error = "SIP/2.0 484 Address Incomplete\r\n\r\n"
 
+
+class Unauthorized(Exception):
+    error = "SIP/2.0 401 Unauthorized\r\n\r\n"
+
+
+class Forbidden(Exception):
+    error = "SIP/2.0 403 Forbidden\r\n\r\n"
+
+
+class Decline(Exception):
+    error = "SIP/2.0 603 Decline\r\n\r\n"
 
 
 def take_args():
@@ -96,35 +108,67 @@ def check_register(line):
     return login, port_uas, expires
 
 
-def check_invite(line, users_dict):
-    dest_login = line.split()[1].split('sip:')[1]
-    origin_login = line.split('o=')[1].split()[0]
-    if not origin_login in users_dict or not dest_login in users_dict:
+def check_invite(line, users_dict, sending_rtp_dict):
+    try:
+        origin_login = line.split('o=')[1].split()[0]
+        dest_login = line.split()[1].split('sip:')[1]
+    except:
+        raise BadRequest
+
+    if not origin_login in users_dict:
+        raise Unauthorized
+    elif not dest_login in users_dict:
         raise UserNotFound
+    else:
+        sending_rtp_dict[origin_login] = dest_login
+        sending_rtp_dict[dest_login] = origin_login
 
 
-
-def is_valid_sdp(line, sending_rtp_dict):
-    content_type = line.split('Content-Type: ')[1].split()[0]
-    version = int(line.split('v=')[1].split()[0])
-    origin = line.split('o=')[1].split()[0:2]
-    sesion = line.split('s=')[1].split()[0]
-    time = int(line.split('t=')[1].split()[0])
-    media = line.split('m=')[1].split()
-    media[1] = int(media[1])
+def is_valid_sdp(line):
+    try:
+        content_type = line.split('Content-Type: ')[1].split()[0]
+        version = int(line.split('v=')[1].split()[0])
+        origin = line.split('o=')[1].split()[0:2]
+        sesion = line.split('s=')[1].split()[0]
+        time = int(line.split('t=')[1].split()[0])
+        media = line.split('m=')[1].split()
+        media[1] = int(media[1])
+    except:
+        raise BadRequest
 
     if not is_valid_ip(origin[1]):
         raise AddressIncomplete
 
     if (content_type != 'application/sdp' or version != 0
-            or not is_valid_ip(origin[1]) or time != 0 or media[0] != 'audio'
-            or media[2] != 'RTP'):
+            or time != 0 or media[0] != 'audio' or media[2] != 'RTP'):
 
-        sending_rtp_dict['ua1'] = origin
         return False
     else:
         return True
 
+
+def is_valid_bye(line, ip, sending_rtp_dict):
+    try:
+        peer1 = line.split()[1].split('sip:')[1]
+    except:
+        raise BadRequest
+
+    if peer1 in sending_rtp_dict:
+        peer2 = sending_rtp_dict[peer1]
+        del sending_rtp_dict[peer1]
+        del sending_rtp_dict[peer2]
+        return True
+    else:
+        return False
+
+
+def add_proxy_header(line):
+    ip = config_dict['server']['ip']
+    port = config_dict['server']['puerto']
+    branch = random.randrange(10**20)
+    via = '\r\nVia: SIP/2.0/UDP %s:%s;branch=%s;rport\r\n' % (ip, port, branch)
+    line = line.replace('\r\n', via, 1)
+    return line
 
 def sent_to_uaserver(line):
     login = line.split()[1].split(':')[1]
@@ -135,25 +179,29 @@ def sent_to_uaserver(line):
     ip_to_send = users_dict[login]['ip']
     port_to_send = int(users_dict[login]['port'])
 
-    via_proxy = "Via: SIP/2.0/UDP " + '127.0.0.1' + ':' + str(5080) + ';rport;' + 'branch=' + str(random.randint(100000000, 850000000)) + '\r\n'
-    line = line.replace('\r\n', '\r\n' + via_proxy, 1)
-
+    line = add_proxy_header(line)
     my_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     my_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     my_socket.connect((ip_to_send, port_to_send))
     my_socket.send(bytes(line, 'utf-8'))
     write_log(config_dict, 'Sent to', ip_to_send, port_to_send, line)
 
-    data = my_socket.recv(1024).decode('utf-8')
-    my_socket.close()
+    try:
+        data = my_socket.recv(1024).decode('utf-8')
+        my_socket.close()
+    except:
+        my_socket.close()
+        raise Decline
     write_log(config_dict, 'Received from', ip_to_send, port_to_send, data)
+    data = add_proxy_header(data)
+
     return data
 
 
 class SIPPRHandler(socketserver.DatagramRequestHandler):
 
     users_dict = {}
-    sending_rtp_dict = {'ua1': '', 'ua2': ''}
+    sending_rtp_dict = {}
 
     def handle(self):
         error_occurred = True
@@ -165,29 +213,22 @@ class SIPPRHandler(socketserver.DatagramRequestHandler):
             line = self.rfile.read().decode('utf-8')
             if not line:
                 break
-            # print(line)
             method, ip, port = check_format(self.client_address, line)
             try:
                 if not method in methods:
                     raise MethodNotAllowed
                 else:
+                    print(method, 'received')
                     methods[method](line, ip, port)
                     error_occurred = False
-
-            except MethodNotAllowed:
-                msg = MethodNotAllowed.error
-            except BadRequest:
-                msg = BadRequest.error
-            except UserNotFound:
-                msg = UserNotFound.error
-            except AddressIncomplete:
-                msg = AddressIncomplete.error
-            except ConnectionRefusedError:
-                msg = "SIP/2.0 603 Decline\r\n\r\n"
+            except:
+                msg = sys.exc_info()[0].error
 
             if error_occurred:
                 self.wfile.write(msg.encode('utf-8'))
                 write_log(config_dict, 'Sent to', ip, port, msg)
+
+            dict2file(database_path, self.users_dict)
 
     def register(self, line, ip, port):
         login, port_uas, expires = check_register(line)
@@ -219,17 +260,15 @@ class SIPPRHandler(socketserver.DatagramRequestHandler):
                     if login in self.users_dict:
                         del self.users_dict[login]
             else:
-                msg = 'SIP/2.0 401 Unauthorized\r\n\r\n'
-
-            dict2file(database_path, self.users_dict)
+                raise Unauthorized
 
         self.wfile.write(msg.encode('utf-8'))
         write_log(config_dict, 'Sent to', ip, port, msg)
 
     def invite(self, line, ip, port):
-        check_invite(line, self.users_dict)
+        check_invite(line, self.users_dict, self.sending_rtp_dict)
 
-        if is_valid_sdp(line, self.sending_rtp_dict):
+        if is_valid_sdp(line):
             data = sent_to_uaserver(line)
             # if not is_valid_sdp(data):
             #     data = BadRequest.error
@@ -243,9 +282,13 @@ class SIPPRHandler(socketserver.DatagramRequestHandler):
         sent_to_uaserver(line)
 
     def bye(self, line, ip, port):
-        data = sent_to_uaserver(line)
-        self.wfile.write(bytes(data, 'utf-8'))
-        write_log(config_dict, 'Sent to', ip, port, data)
+        if is_valid_bye(line, ip, self.sending_rtp_dict):
+            data = sent_to_uaserver(line)
+            self.wfile.write(bytes(data, 'utf-8'))
+            write_log(config_dict, 'Sent to', ip, port, data)
+
+        else:
+            raise Forbidden
 
 
 def main():
@@ -256,7 +299,6 @@ def main():
     database_path = config_dict['database']['path']
     name_server = config_dict['server']['name']
     port = int(config_dict['server']['puerto'])
-
     return name_server, port
 
 
