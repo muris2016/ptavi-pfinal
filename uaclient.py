@@ -4,10 +4,6 @@ import sys
 import os
 import socket
 import hashlib
-
-
-import random
-
 import threading
 from xml.sax import make_parser
 from xml.sax.handler import ContentHandler
@@ -34,15 +30,16 @@ def get_hash(nonce, passwd):
 
 def run_cvlc(rtpaudio_port):
     for_run = 'cvlc rtp://@127.0.0.1:%s 2> /dev/null &' % (rtpaudio_port)
-    print('voy a recibir auido')
+    print('Receiving audio via rtp')
     os.system(for_run)
 
 
 def send_rtp(rtp_port, audio_file):
     for_run = './mp32rtp -i 127.0.0.1 -p %s < %s' % (rtp_port, audio_file)
-    print('voy a enviar auido')
+    print('Sending audio via rtp')
     os.system(for_run)
-    print('Ya he terminado de enviar')
+    print('Sending audio has finished')
+
 
 def connect_to_proxy(msg, my_socket, config_dict, ack=False):
     ip_server = config_dict['regproxy']['ip']
@@ -56,6 +53,9 @@ def connect_to_proxy(msg, my_socket, config_dict, ack=False):
     if not ack:
         data = my_socket.recv(1024).decode('utf-8')
         write_log(config_dict, 'Received from', ip_server, port, data)
+        for response in response_codes:
+            if response in data:
+                print(response, 'received')
         return data
 
 
@@ -72,10 +72,8 @@ def register(my_socket, config_dict, expires):
         nonce = data.split()[-1].split('=')[-1].strip('"')
         passwd = config_dict['account']['passwd']
         response = get_hash(nonce, passwd)
-        msg = 'REGISTER sip:%s:%s SIP/2.0\r\n' % (username, port_uas)
-        msg += 'Expires: %s\r\n' % (expires)
         msg += 'Authorization: Digest response="%s"\r\n\r\n' % (response)
-        data = connect_to_proxy(msg, my_socket, config_dict)
+        connect_to_proxy(msg, my_socket, config_dict)
 
 
 def invite(my_socket, config_dict, login):
@@ -99,24 +97,31 @@ def invite(my_socket, config_dict, login):
         t2 = threading.Thread(target=send_rtp, args=(rtp_port, audio_file,))
         t1.start()
         t2.start()
-    else:
-        print(data)
+
+
 def bye(my_socket, config_dict, login):
     msg = 'BYE sip:%s SIP/2.0\r\n\r\n' % (login)
     data = connect_to_proxy(msg, my_socket, config_dict)
     if '200 OK' in data:
+        os.system('killall mp32rtp 2> /dev/null')
         write_log(config_dict, 'Finishing...\n\r')
-    else:
-        print(data)
+
 
 if __name__ == '__main__':
     methods = {'REGISTER': register, 'INVITE': invite, 'BYE': bye}
+    global response_codes
+    response_codes = ['Bad Request', 'User Not Found', 'Method Not Allowed']
+    response_codes += ['Address Incomplete', 'Unauthorized', 'OK', 'Decline']
+    response_codes += ['Temporarily Unavailable', 'Forbidden']
     config, method, option = take_args()
     config_dict = get_tags(config, ConfigHandler)
 
     try:
         my_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         methods[method](my_socket, config_dict, option)
+
+    except KeyError:
+        sys.exit('Usage: python uaclient.py config method option')
 
     except ConnectionRefusedError:
         ip_server = config_dict['regproxy']['ip']
