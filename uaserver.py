@@ -33,15 +33,17 @@ class ConfigHandler(ContentHandler):
 
 def run_cvlc(rtpaudio_port):
     for_run = 'cvlc rtp://127.0.0.1:%s 2> /dev/null' % (rtpaudio_port)
-    print('voy a recibir auido')
+    print('Receiving audio via rtp')
     os.system(for_run)
+
 
 
 def send_rtp(rtp_port, audio_file):
     for_run = './mp32rtp -i 127.0.0.1 -p %s < %s' % (rtp_port, audio_file)
-    print('voy a enviar auido')
+    print('Sending audio via rtp')
     os.system(for_run)
-    print('Ya he terminado de enviar')
+    print('Sending audio has finished')
+
 
 def get_tags(config, Handler, proxy=False):
     parser = make_parser()
@@ -77,13 +79,12 @@ class UASHandler(socketserver.DatagramRequestHandler):
         self.methods = {'INVITE': self.invite, 'ACK': self.ack}
         self.methods['BYE'] = self.bye
         while 1:
-
             line = self.rfile.read().decode('utf-8')
             if not line:
                 break
-
             ip = self.client_address[0]
             port = self.client_address[1]
+            print(method, 'received')
             write_log(config_dict, 'Received from', ip, port, line)
             method = line.split()[0]
             self.methods[method](line, ip, port)
@@ -109,8 +110,11 @@ class UASHandler(socketserver.DatagramRequestHandler):
         rtp_port = self.rtp_dict['port']
         audio_file = config_dict['audio']['path']
         rtpaudio_port = config_dict['rtpaudio']['puerto']
-        self.threads['t1'] = threading.Thread(target=run_cvlc, args=(rtpaudio_port,))
-        self.threads['t2'] = threading.Thread(target=send_rtp, args=(rtp_port, audio_file,))
+
+        self.threads['t1'] = threading.Thread(target=run_cvlc,
+                                              args=(rtpaudio_port,))
+        self.threads['t2'] = threading.Thread(target=send_rtp,
+                                              args=(rtp_port, audio_file,))
         self.threads['t1'].start()
         self.threads['t2'].start()
 
@@ -118,8 +122,8 @@ class UASHandler(socketserver.DatagramRequestHandler):
         msg = 'SIP/2.0 200 OK\r\n\r\n'
         self.wfile.write(bytes(msg, 'utf-8'))
         if self.threads['t1'].isAlive():
-            os.system('killall mp32rtp')
-            os.system('killall vlc')
+            os.system('killall mp32rtp 2> /dev/null')
+            os.system('killall vlc 2> /dev/null')
         write_log(config_dict, 'Sent to', ip, port, msg)
         self.rtp_dict = {}
 
