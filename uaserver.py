@@ -31,17 +31,6 @@ class ConfigHandler(ContentHandler):
             self.config_dict[name] = my_dict
 
 
-def run_cvlc(rtpaudio_port):
-    for_run = 'cvlc rtp://127.0.0.1:%s 2> /dev/null' % (rtpaudio_port)
-    print('Receiving audio via rtp')
-    os.system(for_run)
-
-
-def send_rtp(rtp_port, audio_file):
-    for_run = './mp32rtp -i 127.0.0.1 -p %s < %s' % (rtp_port, audio_file)
-    print('Sending audio via rtp')
-    os.system(for_run)
-    print('Sending audio has finished')
 
 
 def get_tags(config, Handler, proxy=False):
@@ -110,13 +99,7 @@ class UASHandler(socketserver.DatagramRequestHandler):
         audio_file = config_dict['audio']['path']
         rtpaudio_port = config_dict['rtpaudio']['puerto']
 
-        self.threads['t1'] = threading.Thread(target=run_cvlc,
-                                              args=(rtpaudio_port,))
-        self.threads['t2'] = threading.Thread(target=send_rtp,
-                                              args=(rtp_port, audio_file,))
-        self.threads['t1'].start()
-        time.sleep(0.2)
-        self.threads['t2'].start()
+
 
     def bye(self, line, ip, port):
         msg = 'SIP/2.0 200 OK\r\n\r\n'
