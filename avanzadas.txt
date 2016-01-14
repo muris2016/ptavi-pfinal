@@ -1,0 +1,6 @@
+Cabecera proxy
+Reestablecer usuarios conectados
+Integracion de (c)vlc
+Integracion de (c)vlc con hilos
+Consistencia frente a valores erroneos
+Hilos para el envío de audio vía RTP
