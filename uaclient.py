@@ -29,17 +29,7 @@ def get_hash(nonce, passwd):
     return m.hexdigest()
 
 
-def run_cvlc(rtpaudio_port):
-    for_run = 'cvlc rtp://@127.0.0.1:%s 2> /dev/null &' % (rtpaudio_port)
-    print('Receiving audio via rtp')
-    os.system(for_run)
 
-
-def send_rtp(rtp_port, audio_file):
-    for_run = './mp32rtp -i 127.0.0.1 -p %s < %s' % (rtp_port, audio_file)
-    print('Sending audio via rtp')
-    os.system(for_run)
-    print('Sending audio has finished')
 
 
 def connect_to_proxy(msg, my_socket, ack=False):
@@ -94,11 +84,6 @@ def invite(my_socket, login):
         rtp_port = data.split('m=')[1].split()[1]
         audio_file = config_dict['audio']['path']
 
-        t1 = threading.Thread(target=run_cvlc, args=(rtpaudio_port,))
-        t2 = threading.Thread(target=send_rtp, args=(rtp_port, audio_file,))
-        t1.start()
-        time.sleep(0.2)
-        t2.start()
 
 
 def bye(my_socket, login):
