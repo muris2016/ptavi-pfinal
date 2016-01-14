@@ -1,5 +1,5 @@
 <config>
-  <accout username="javier@erazo.com" passwd="password"/>
+  <account username="javier@erazo.com" passwd="pizza"/>
   <uaserver ip="127.0.0.1" puerto="5070"/>
   <rtpaudio puerto= "23032"/>
   <regproxy ip="127.0.0.1" puerto="5080"/>
