@@ -37,7 +37,6 @@ def run_cvlc(rtpaudio_port):
     os.system(for_run)
 
 
-
 def send_rtp(rtp_port, audio_file):
     for_run = './mp32rtp -i 127.0.0.1 -p %s < %s' % (rtp_port, audio_file)
     print('Sending audio via rtp')
@@ -84,9 +83,9 @@ class UASHandler(socketserver.DatagramRequestHandler):
                 break
             ip = self.client_address[0]
             port = self.client_address[1]
-            print(method, 'received')
             write_log(config_dict, 'Received from', ip, port, line)
             method = line.split()[0]
+            print(method, 'received')
             self.methods[method](line, ip, port)
 
     def invite(self, line, ip, port):
@@ -116,6 +115,7 @@ class UASHandler(socketserver.DatagramRequestHandler):
         self.threads['t2'] = threading.Thread(target=send_rtp,
                                               args=(rtp_port, audio_file,))
         self.threads['t1'].start()
+        time.sleep(0.2)
         self.threads['t2'].start()
 
     def bye(self, line, ip, port):
