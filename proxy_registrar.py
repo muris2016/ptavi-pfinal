@@ -13,6 +13,7 @@ from uaserver import write_log
 import uaclient
 import uaserver
 
+
 class BadRequest(Exception):
     error = "SIP/2.0 400 Bad Request\r\n\r\n"
 
@@ -35,6 +36,10 @@ class Unauthorized(Exception):
 
 class Forbidden(Exception):
     error = "SIP/2.0 403 Forbidden\r\n\r\n"
+
+
+class Conflict(Exception):
+    error = "SIP/2.0 409 Conflict\r\n\r\n"
 
 
 class Decline(Exception):
@@ -101,7 +106,7 @@ def check_register(line):
     try:
         login = line.split()[1].split(':')[1]
         port_uas = int(line.split()[1].split(':')[2])
-        expires = int(line.split()[4])
+        expires = int(line.split('Expires:')[1])
     except:
         raise BadRequest
 
@@ -125,6 +130,7 @@ def check_invite(line, users_dict, sending_rtp_dict):
 
 
 def is_valid_sdp(line):
+    valid = True
     try:
         content_type = line.split('Content-Type: ')[1].split()[0]
         version = int(line.split('v=')[1].split()[0])
@@ -141,13 +147,13 @@ def is_valid_sdp(line):
 
     if (content_type != 'application/sdp' or version != 0
             or time != 0 or media[0] != 'audio' or media[2] != 'RTP'):
+        valid = False
 
-        return False
-    else:
-        return True
+    return valid
 
 
 def is_valid_bye(line, ip, sending_rtp_dict):
+    valid = False
     try:
         peer1 = line.split()[1].split('sip:')[1]
     except:
@@ -157,9 +163,9 @@ def is_valid_bye(line, ip, sending_rtp_dict):
         peer2 = sending_rtp_dict[peer1]
         del sending_rtp_dict[peer1]
         del sending_rtp_dict[peer2]
-        return True
-    else:
-        return False
+        valid = True
+
+    return valid
 
 
 def add_proxy_header(line):
@@ -169,6 +175,7 @@ def add_proxy_header(line):
     via = '\r\nVia: SIP/2.0/UDP %s:%s;branch=%s;rport\r\n' % (ip, port, branch)
     line = line.replace('\r\n', via, 1)
     return line
+
 
 def sent_to_uaserver(line):
     login = line.split()[1].split(':')[1]
@@ -192,9 +199,9 @@ def sent_to_uaserver(line):
     except:
         my_socket.close()
         raise Decline
+
     write_log(config_dict, 'Received from', ip_to_send, port_to_send, data)
     data = add_proxy_header(data)
-
     return data
 
 
@@ -252,6 +259,9 @@ class SIPPRHandler(socketserver.DatagramRequestHandler):
             if user_response == response:
                 msg = 'SIP/2.0 200 OK\r\n\r\n'
                 if expires != 0:
+                    if login in self.users_dict:
+                        raise Conflict
+
                     exp_t = expires + time.time()
                     self.users_dict[login] = {'ip': ip, 'port': port_uas,
                                               'register date': time.time(),
@@ -270,9 +280,6 @@ class SIPPRHandler(socketserver.DatagramRequestHandler):
 
         if is_valid_sdp(line):
             data = sent_to_uaserver(line)
-            # if not is_valid_sdp(data):
-            #     data = BadRequest.error
-
             self.wfile.write(bytes(data, 'utf-8'))
             write_log(config_dict, 'Sent to', ip, port, data)
         else:
