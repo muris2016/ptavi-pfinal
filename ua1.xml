@@ -1,5 +1,5 @@
 <config>
-  <accout username="ronny@soria.com" passwd="contraseña"/>
+  <account username="ronny@soria.com" passwd="tarta"/>
   <uaserver ip="127.0.0.1" puerto="5060"/>
   <rtpaudio puerto= "12021"/>
   <regproxy ip="127.0.0.1" puerto="5080"/>
