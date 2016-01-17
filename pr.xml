@@ -1,5 +1,5 @@
 <config>
   <server name="PtaviServer" ip="127.0.0.1" puerto="5080"/>
-  <database path="users.json" passwdpath="passwds.json"/>
+  <database path="users.json" passwdpath="passwords.json"/>
   <log path="log_pr.txt"/>
 </config>
