@@ -5,7 +5,7 @@ import socket
 import sys
 import os
 import socketserver
-import threading
+from threading import Thread
 from xml.sax import make_parser
 from xml.sax.handler import ContentHandler
 
@@ -31,6 +31,17 @@ class ConfigHandler(ContentHandler):
             self.config_dict[name] = my_dict
 
 
+def run_cvlc(config_dict):
+    port2rcv = config_dict['rtpaudio']['puerto']
+    ip2rcv = config_dict['uaserver']['ip']
+    print('Receiving audio via rtp at port %s' % (port2rcv))
+    os.system('cvlc rtp://%s:%s 2> /dev/null &' % (ip2rcv, port2rcv))
+
+
+def send_rtp(rtp_ip, rtp_port, audio_file):
+    print('Sending audio via rtp to %s:%s' % (rtp_ip, rtp_port))
+    os.system('./mp32rtp -i %s -p %s < %s' % (rtp_ip, rtp_port, audio_file))
+    print('Sending audio has finished')
 
 
 def get_tags(config, Handler, proxy=False):
@@ -52,16 +63,9 @@ def write_log(config_dict, event, ip='', port='', msg=''):
             outfile.write('%s %s\n' % (hour, event))
 
 
-def take_args():
-    if len(sys.argv) != 2:
-        sys.exit('Usage: python uaserver.py config')
-    else:
-        return sys.argv[1]
-
-
 class UASHandler(socketserver.DatagramRequestHandler):
     rtp_dict = {}
-    threads = {'t1': threading.Thread(), 't2': threading.Thread()}
+    threads = {'t1': Thread(), 't2': Thread()}
 
     def handle(self):
         self.methods = {'INVITE': self.invite, 'ACK': self.ack}
@@ -80,14 +84,17 @@ class UASHandler(socketserver.DatagramRequestHandler):
     def invite(self, line, ip, port):
         if not self.threads['t2'].isAlive():
             self.rtp_dict['port'] = line.split('m=')[1].split()[1]
+            self.rtp_dict['ip'] = line.split('o=')[1].split()[1]
             username = config_dict['account']['username']
+            ip = config_dict['uaserver']['ip']
             rtpaudio_port = config_dict['rtpaudio']['puerto']
             msg = 'SIP/2.0 100 Trying\r\n\r\n'
             msg += 'SIP/2.0 180 Ringing\r\n\r\n'
             msg += 'SIP/2.0 200 OK\r\n'
             msg += 'Content-Type: application/sdp\r\n\r\n'
-            msg += 'v=0\r\no=%s 127.0.0.1\r\ns=mp3p2p\r\nt=0\r\n' % (username)
+            msg += 'v=0\r\no=%s %s\r\ns=mp3p2p\r\nt=0\r\n' % (username, ip)
             msg += 'm=audio %s RTP\r\n\r\n' % (rtpaudio_port)
+            os.system('killall vlc 2> /dev/null')
         else:
             msg = 'SIP/2.0 480 Temporarily Unavailable\r\n\r\n'
 
@@ -95,11 +102,14 @@ class UASHandler(socketserver.DatagramRequestHandler):
         write_log(config_dict, 'Sent to', ip, port, msg)
 
     def ack(self, line, ip, port):
-        rtp_port = self.rtp_dict['port']
-        audio_file = config_dict['audio']['path']
-        rtpaudio_port = config_dict['rtpaudio']['puerto']
-
-
+        ip = self.rtp_dict['ip']
+        port = self.rtp_dict['port']
+        audio_f = config_dict['audio']['path']
+        self.threads['t1'] = Thread(target=run_cvlc, args=(config_dict,))
+        self.threads['t2'] = Thread(target=send_rtp, args=(ip, port, audio_f,))
+        self.threads['t1'].start()
+        time.sleep(0.2)
+        self.threads['t2'].start()
 
     def bye(self, line, ip, port):
         msg = 'SIP/2.0 200 OK\r\n\r\n'
@@ -112,11 +122,13 @@ class UASHandler(socketserver.DatagramRequestHandler):
 
 
 def main():
+    if len(sys.argv) != 2:
+        sys.exit('Usage: python uaserver.py config')
+    else:
+        config = sys.argv[1]
     global config_dict
-    config = take_args()
     config_dict = get_tags(config, ConfigHandler)
     port_uas = int(config_dict['uaserver']['puerto'])
-
     return port_uas
 
 if __name__ == '__main__':
